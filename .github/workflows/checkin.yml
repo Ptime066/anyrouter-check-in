@@ -18,6 +18,8 @@ jobs:
       PYTHONIOENCODING: utf-8
       PYTHONUNBUFFERED: 1
       DEBUG_MODE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.debug == 'true' && 'true' || 'false' }}
+      # 新增：给 cloakbrowser 全局注入浏览器启动参数（核心修复）
+      CLOAKBROWSER_EXTRA_ARGS: --no-sandbox --disable-dev-shm-usage --disable-gpu --single-process
     steps:
     - uses: actions/checkout@v6
 
@@ -37,17 +39,22 @@ jobs:
         key: ${{ runner.os }}-uv-${{ hashFiles('pyproject.toml', 'uv.lock') }}
         restore-keys: |
           ${{ runner.os }}-uv-
-
     - name: 安装依赖
       run: |
         uv sync --frozen
         echo "✅ 环境初始化完成"
 
+    # ========== 【修改1】扩充系统依赖：补充 Chromium 运行库 + 原有字体 ==========
     - name: 安装系统依赖
       run: |
         sudo apt-get update
         sudo apt-get install -y xvfb fonts-noto-color-emoji fonts-freefont-ttf fonts-unifont \
-          fonts-ipafont-gothic fonts-wqy-zenhei fonts-tlwg-loma-otf
+          fonts-ipafont-gothic fonts-wqy-zenhei fonts-tlwg-loma-otf \
+          libnss3 libatk-bridge2.0-0 libcups2 libxkbcommon0 libgbm1 libasound2
+
+    # ========== 【修改2】新增：扩容 /dev/shm 共享内存（必加） ==========
+    - name: 扩容 /dev/shm
+      run: sudo mount -o remount,size=2G /dev/shm
 
     - name: 缓存 CloakBrowser 二进制
       uses: actions/cache@v5
@@ -57,7 +64,6 @@ jobs:
         key: ${{ runner.os }}-cloakbrowser-v1
         restore-keys: |
           ${{ runner.os }}-cloakbrowser-
-
     - name: 安装 CloakBrowser
       run: |
         uv run python -m cloakbrowser install
@@ -71,7 +77,6 @@ jobs:
         restore-keys: |
           balance-hash-${{ github.ref_name }}-
           balance-hash-
-
     - name: 恢复浏览器 Profile 缓存
       uses: actions/cache@v5
       with:
@@ -79,7 +84,6 @@ jobs:
         key: browser-profiles-${{ runner.os }}-v1
         restore-keys: |
           browser-profiles-${{ runner.os }}-
-
     - name: 配置代理
       env:
         PROXY_SUBSCRIPTION_URL: ${{ secrets.PROXY_SUBSCRIPTION_URL }}
@@ -91,7 +95,8 @@ jobs:
     - name: 执行签到
       env:
         DEBUG_MODE: ${{ env.DEBUG_MODE }}
-        CHECKIN_HEADLESS: false
+        # ========== 【修改3】关闭可视化界面，强制无头模式 ==========
+        CHECKIN_HEADLESS: true
         CHECKIN_HUMANIZE: true
         CHECKIN_WAIT_TIMEOUT_MS: 120000
         ANYROUTER_ACCOUNTS: ${{ secrets.ANYROUTER_ACCOUNTS }}
@@ -115,7 +120,6 @@ jobs:
         BARK_SERVER: ${{ secrets.BARK_SERVER }}
       run: |
         xvfb-run -a --server-args="-screen 0 1920x1080x24" uv run checkin.py
-
     - name: 上传调试截图
       if: always() && env.DEBUG_MODE == 'true'
       env:
